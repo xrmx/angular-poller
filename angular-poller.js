@@ -74,7 +74,7 @@
             }
         })
 
-        .factory('poller', function ($interval, $q, $http, pollerConfig) {
+        .factory('poller', function ($interval, $q, $http, $$rAF, pollerConfig) {
 
             var pollers = [], // Poller registry
 
@@ -83,7 +83,8 @@
                     argumentsArray: [],
                     delay: 5000,
                     smart: false,
-                    catchError: false
+                    catchError: false,
+                    useRaf: false
                 },
 
                 /**
@@ -94,6 +95,7 @@
                  *  - delay
                  *  - smart (indicates whether poller should only send new request if the previous one is resolved)
                  *  - catchError (indicates whether poller should get notified of error responses)
+                 *  - useRaf (indicates whether poller would use window.requestAnimationFrame as backend)
                  *  - promise
                  *  - interval
                  *
@@ -141,7 +143,7 @@
                  */
                 set: function (options) {
 
-                    angular.forEach(['action', 'argumentsArray', 'delay', 'smart', 'catchError'], function (prop) {
+                    angular.forEach(['action', 'argumentsArray', 'delay', 'smart', 'catchError', 'useRaf'], function (prop) {
                         if (options && options[prop]) {
                             this[prop] = options[prop];
                         } else if (!this[prop]) {
@@ -191,6 +193,7 @@
                         if (!smart || !angular.isDefined(current) || current.$resolved) {
 
                             timestamp = new Date();
+                            self.lastTick = timestamp;
                             current = target[action].apply(self, argumentsArray);
                             current.$resolved = false;
 
@@ -221,8 +224,30 @@
                     }
 
                     tick();
-                    this.interval = $interval(tick, delay);
+                    if (this.useRaf) {
+                        this.interval = true;
+                        this.interval = this.rAFInterval(tick, delay);
+                    } else {
+                        this.interval = $interval(tick, delay);
+                    }
                     this.promise = this.deferred.promise;
+                },
+
+                /**
+                 * $$rAF backed interval implementation
+                 */
+                rAFInterval: function (tick, delay) {
+                    var now = new Date();
+                    var self = this;
+                    if (now - self.lastTick >= delay) {
+                        tick();
+                    }
+                    if (self.interval) {
+                        $$rAF(function() {
+                            this.rAFInterval(tick, delay);
+                        }.bind(self));
+                    }
+                    return true;
                 },
 
                 /**
@@ -230,7 +255,11 @@
                  */
                 stop: function () {
 
-                    if (angular.isDefined(this.interval)) {
+                    if (this.useRaf) {
+                        /* $$rAF is executed once so we don't have anything to cancel */
+                        this.interval = undefined;
+                        this.stopTimestamp = new Date();
+                    } else if (angular.isDefined(this.interval)) {
                         $interval.cancel(this.interval);
                         this.interval = undefined;
                         this.stopTimestamp = new Date();
